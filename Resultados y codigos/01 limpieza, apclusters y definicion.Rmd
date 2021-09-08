@@ -1,0 +1,1212 @@
+---
+title: "Estudio exploratorio del portafolio de productos"
+author: "Catalina Perez-Garcia"
+date: "Agosto 2021"
+output:  
+  pdf_document:
+    number_section: True  
+documentclass: article
+classoption: letterpaper
+biblio-style: plain
+header-includes:
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage[utf8]{inputenc}
+- \usepackage[spanish]{babel}
+- \usepackage{booktabs}
+- \usepackage{longtable}
+- \usepackage{multirow}
+- \usepackage{wrapfig}
+- \usepackage{xcolor}
+- \usepackage{tabu}
+- \usepackage{threeparttable}
+- \usepackage{threeparttablex}
+- \usepackage{makecell}
+- \usepackage{lipsum}
+- \usepackage{enumerate}
+- \usepackage{geometry}
+- \usepackage{natbib}
+- \usepackage{titling}
+- \pretitle{\begin{center}\LARGE\ \\[\bigskipamount]}
+- \posttitle{\end{center}}
+- \usepackage{fancyhdr, lastpage}
+- \pagestyle{fancy}
+- \fancyhf{}% Clear header/footer
+- \fancyhead[L]{ \includegraphics[height=35pt]{logo.jpg}}
+- \fancyhead[R]{\parbox[b][][t]{6 cm}{\hfill \raggedright \textbf{Análisis de Patentes}\\ \hfill Agosto 2021}}
+  \fancyfoot[R]{\thepage\  / \pageref{LastPage}}% Right footer
+- \setlength{\headheight}{39pt}
+---
+
+```{r, include=FALSE}
+
+options(tinytex.verbose = TRUE)
+
+# Paquetes que vamos a usar en el reporte
+require(ggplot2)
+require(kableExtra)
+require(ggthemes)
+require(knitr)
+require(RColorBrewer)
+
+# Actualizamos el tema para ggplot2 
+tema <- theme_classic() + 
+  theme(text = element_text(family = "serif"), 
+        legend.position = "bottom",
+        legend.box.background = element_rect(),
+        strip.background = element_blank())
+theme_set(tema)
+
+opts_chunk$set(tidy.opts=list(width.cutoff=20),tidy=TRUE)
+
+
+```
+
+
+\begin{center}
+
+\vspace{1 cm}
+
+
+
+\vspace{1 cm}
+
+\includegraphics[height=70pt]{logo.jpg}
+
+
+
+
+\end{center}
+
+
+
+\newpage
+
+\section{Introducción}
+
+
+Una patente es un conjunto de derechos exclusivos concedidos por un Estado al inventor de un nuevo producto o tecnología, susceptibles de ser explotados comercialmente por un período limitado de tiempo, a cambio de la divulgación de la invención.
+
+En un mundo globalizado, donde el éxito de desarrollos tecnológicos depende significativamente de la colaboración de los distintos actores, analizar los datos de las patentes tiene un potencial inexplorado. Las herramientas para realizar distintos analisis de la información disponible permite mejorar la toma de decisiones a todo tipo de organizaciones.
+
+El número de patentes aprobadas en el mundo crece rapidamente cada año, por lo que se requieren análisis de patentes que extraigan efectivamente la información valiosa contenida en ellas.  
+
+PatentScope es la base de datos pública de WIPO. Incluye la cobertura de las solicitudes del Tratado de Cooperación en materia de Patentes (administradas por WIPO) y una amplia gama de otros países, incluida la Oficina Europea de Patentes, la USPTO y Japón. Actualmente la base cuenta con más de 97 millones de documentos de patentes. Las bases con las que se realiza el análisis se descargan desde Patente Scope.
+
+
+
+\subsection{Limpieza de la data}
+
+
+Se filtran las patentes para dejar aquellas desde el año 2000 hasta la fecha según el año de publicación. Se procesan las patentes para borrar missing values, cambiar formatos en las columnas según corresponda.
+
+```{r settings, eval=TRUE, echo=FALSE, include = FALSE}
+rm(list=ls())				# Limpiamos todos los objetos creados en R
+graphics.off()				# Limpiamos los gráficos
+options(digits = 3)			# Declaramos dígitos despues del punto para observar (decimas, centesimas,...)
+set.seed(12345)
+
+```
+
+
+```{r cleaning, eval=TRUE, echo=FALSE, include = FALSE}
+# Cargar librerias
+
+library(readxl)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(tidyr)
+
+limpiar_base= function(BD){
+  
+  #Las columnas con fechas con el formato correcto.
+  
+  BD <- BD %>%
+    mutate(`Publication Date` = as.Date(`Publication Date`, "%d.%m.%Y" ) ,
+           `Application Date` = as.Date(`Application Date`, "%d.%m.%Y" ) )
+  
+  #Para el analisis se filtan las patentes desde el año 2000 según el año de publicación, el cual no tiene missing values. En este paso la base resultante es de 406 filas (patentes)."""
+  
+  BD <- BD %>%
+    filter(`Publication Date` > "1999-12-31") %>%
+    arrange(desc(`Publication Date`))
+  
+  #Las columnas con textos se pasan a minusculas para evitar futuras incongruencias. Además se separa la columna con los solictantes, para obtener una columna con el primero."""
+  
+  
+  BD <- BD %>%
+    mutate(Title = str_trim(tolower(Title), side = "both"), 
+           Abstract =str_trim(tolower(Abstract), side = "both"), 
+           Applicants = str_trim(tolower(Applicants), side = "both"),
+           Inventors = str_trim(tolower(Inventors), side = "both") ) %>%  
+    separate(Applicants, c("first_Applicant", "rest_Applicants"),"; ",fill = "right", extra = "merge") %>%
+    mutate(first_Applicant = str_trim(first_Applicant, side = "both"))
+  
+  #Dado que los analisis se realizarán con los Abstract de los documentos, se filtran aquellos sin esta variable."""
+  
+  BD <- BD %>%
+    filter(!is.na(Abstract))
+  
+  #"""Dado que los inventos se patentan en más de un país, se crea otra data sin duplicados con 286 filas.
+  
+  BD_unq <- BD %>%
+    distinct(Title, .keep_all= TRUE)
+  
+  BD_unq$IPC1=BD_unq$`I P C`
+  BD_unq$IPC1=gsub(" ", "", BD_unq$IPC1)
+  BD_unq$IPC1=gsub("/", "", BD_unq$IPC1)
+  BD_unq$IPC1=gsub(";", " ", BD_unq$IPC1)
+  
+  
+  #BD_unq=instaflow
+  
+  BD_unq$IPC2=BD_unq$`I P C`
+  BD_unq$IPC2=gsub(" ", "", BD_unq$IPC2)
+  hola = strsplit(BD_unq$IPC2,";")
+  for (i in 1:length(hola)) {
+    BD_unq$IPC2[i]= paste(unique(substr(hola[[i]], 1, 6)), collapse = " ") 
+  }
+  BD_unq$IPC2=gsub("/", "", BD_unq$IPC2)
+  
+  BD_unq$IPC3=BD_unq$`I P C`
+  BD_unq$IPC3=gsub(" ", "", BD_unq$IPC3)
+  hola = strsplit(BD_unq$IPC3,";")
+  for (i in 1:length(hola)) {
+    BD_unq$IPC3[i]= paste(unique(substr(hola[[i]], 1, 4)), collapse = " ") 
+  }
+  BD_unq$IPC3=gsub("/", "", BD_unq$IPC3)
+  
+  BD_unq
+}
+
+```
+
+
+
+```{r, eval=TRUE, echo=FALSE, include = FALSE}
+#cargar y limpiar bases 
+BD <- read_excel("~/Ramos/2021-2/Instacrops/Patentes/Analisis/input/01 instasoil.xls",  skip = 5)
+instasoil = limpiar_base(BD)
+
+BD <- read_excel("~/Ramos/2021-2/Instacrops/Patentes/Analisis/input/01 instawell.xls",  skip = 5)
+instawell = limpiar_base(BD)
+
+BD <- read_excel("~/Ramos/2021-2/Instacrops/Patentes/Analisis/input/01 instaflow.xls",  skip = 5)
+instaflow = limpiar_base(BD)
+
+BD <- read_excel("~/Ramos/2021-2/Instacrops/Patentes/Analisis/input/01 instaweather.xls",  skip = 5)
+instaweather = limpiar_base(BD)
+
+BD <- read_excel("~/Ramos/2021-2/Instacrops/Patentes/Analisis/input/01 skycrops.xls",  skip = 5)
+skycrops = limpiar_base(BD)
+
+```
+
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tema=c("Monitoreo de Suelo", "Monitoreo y Control de Pozos y Tranques","Sistemas de Control de Valvulas Inalambricas","Estaciones Climaticas","Imágenes Satelitales y Drones")
+linea_de_negocio=c("InstaSoil","InstaWell","InstaFlow","InstaWeather","SkyCrops")
+n_de_patentes=c(nrow(instasoil),nrow(instawell),nrow(instaflow),nrow(instaweather),nrow(skycrops))
+querys=c("FP:(soil) AND ((crop) OR (farm)) AND ((catheter) OR (probe)) AND (monitoring)","FP:(water) AND ((crop) OR (farm)) AND (flow rate) AND (monitoring) AND ((well) OR (blockade))","FP:(irrigation) AND ((crop) OR (farm)) AND ((wireless) OR (remote)) AND (controller)","FP:(weather) AND ((crop) OR (farm)) AND (measure)","FP:(images) AND ((crop) OR (farm)) AND ((drone) OR (satellite)) AND (monitoring)")
+aux=data.frame(tema,linea_de_negocio,querys, n_de_patentes)
+names(aux)= c("Temática","Línea de negocio", "Query", "N de patentes")
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Descripción de las bases utilizadas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(1, width="7em") %>%
+  column_spec(2, width="7em") %>%
+  column_spec(4, width="4em") %>%
+  column_spec(3, width = "18em")
+
+input=list(tema,linea_de_negocio,querys)
+```
+
+\subsection{Estructuración de la data}
+
+
+Para poder analizar la base en profundidad se debe encontrar aquellas patentes que están más relacionadas con los servicios desarrollados por Instacrops. Es debido a lo anterior que se implementa métodos de clustering basado en el contenido de texto de los abstracts de los documentos de las patentes.
+
+Para poder implementar los métodos de clustering es necesario obtener métricas de distancia entre cada uno de los documentos de las patentes. Para realizar esto se sigue la metodología propuesta en el artículo "Technology Clusters Exploration for Patent Portfolio through Patent Abstract Analysis" de los autores Gabjo Kim, Joonhyuck Lee, Dongsik Jang and Sangsung Park. 
+
+En primer lugar se enlistan todos las palabras que están presentes en todos los abstracts, se eliminan las stopword, es decir, articulos, conjunciones y conectores. Se genera una matriz Patente-Concepto. Se calcula la distancia entre cada par de patentes. Por último, se aplica una reducción de la dimensionalidad donde se obtiene una posiciónde dos dimensiones para cada patente. La metodología se puede ver en la siguiente figura.
+
+\begin{center}
+\includegraphics[height=150pt]{estructuracion.jpg}
+\end{center}
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+
+library(tidytext)
+estructurar_base = function(BD_unq){
+  
+  sentences <-BD_unq$Abstract
+  
+  corpus = tm::Corpus(tm::VectorSource(sentences))
+  # Cleaning up
+  # Handling UTF-8 encoding problem from the dataset
+  corpus.cleaned <- tm::tm_map(corpus, function(x) iconv(x, to='UTF-8', sub='byte')) 
+  corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::removeWords, tm::stopwords('english')) # Removing stop-words
+  corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stemDocument, language = "english") # Stemming the words 
+  corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stripWhitespace) # Trimming excessive whitespaces
+  
+  # Building the feature matrices
+  tdm <- tm::DocumentTermMatrix(corpus.cleaned)
+  #tdm.tfidf <- tm::weightTfIdf(tdm)
+  
+  # We remove A LOT of features. R is natively very weak with high dimensional matrix
+  #tdm.tfidf <- tm::removeSparseTerms(tdm.tfidf, 0.999)
+  #tdm <- tm::removeSparseTerms(tdm, 0.999)
+  
+  # There is the memory-problem part
+  # - Native matrix isn't "sparse-compliant" in the memory
+  # - Sparse implementations aren't necessary compatible with clustering algorithms
+  #tfidf.matrix <- as.matrix(tdm.tfidf)
+  tdm.matrix <- as.matrix(tdm)
+  
+  # Cosine distance matrix (useful for specific clustering algorithms)
+  #dist.matrix = proxy::dist(tfidf.matrix, method = "cosine")
+  dist.matrix = proxy::dist(tdm.matrix, method = "Euclidean")
+  dist.matrix_2D=cmdscale(dist.matrix, k = 2)
+  
+  df=as.matrix(dist.matrix_2D)
+  dist.matrix_2D
+  
+}
+
+```
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+
+instaflow_dist = estructurar_base(instaflow)
+instasoil_dist = estructurar_base(instasoil)
+instaweather_dist = estructurar_base(instaweather)
+instawell_dist = estructurar_base(instawell)
+skycrops_dist = estructurar_base(skycrops)
+
+```
+
+
+\section{Obtención de los Clusters}
+
+Se prueba con el método Affinity Propagation (AP) Clustering. Se obtienen los siguientes clusters para tema.
+
+```{r , fig.cap="\\label{fig:fig} Resultados con AP Clustering", eval=TRUE, echo=FALSE, include=TRUE, message=FALSE, out.width = '90%', fig.height=10, fig.align="center", fig.pos="H", warning=FALSE}
+
+library(apcluster)
+
+instaflow_cluster = apcluster(negDistMat(r=2),instaflow_dist)
+instasoil_cluster = apcluster(negDistMat(r=2),instasoil_dist)
+instaweather_cluster = apcluster(negDistMat(r=2),instaweather_dist)
+instawell_cluster = apcluster(negDistMat(r=2),instawell_dist)
+skycrops_cluster = apcluster(negDistMat(r=2),skycrops_dist)
+
+par(mfrow =c(3,2))
+
+plot(instaflow_cluster,instaflow_dist, main="AP Clusters Sistemas de Control de Valvulas Inalambricas")
+plot(instasoil_cluster,instasoil_dist, main="AP Clusters Monitoreo de Suelo")
+plot(instaweather_cluster,instaweather_dist, main="AP Clusters Estaciones Climaticas")
+plot(instawell_cluster,instawell_dist, main="AP Clusters Monitoreo y Control de Pozos y Tranques")
+plot(skycrops_cluster,skycrops_dist, main="AP Clusters Imágenes Satelitales y Drones")
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+n_clusters=c(1:5)
+net_similarity= c(1:5)
+input_preference=c(1:5)
+n_interations=c(1:5)
+clusters=list(instasoil_cluster, instawell_cluster, instaflow_cluster, instaweather_cluster, skycrops_cluster)
+
+for (i in 1:5) {
+  n_clusters[i] = length(clusters[[i]]@clusters)
+  net_similarity[i] = clusters[[i]]@netsim
+  input_preference[i] = clusters[[i]]@p
+  n_interations[i] = clusters[[i]]@it
+}
+  
+
+
+aux=data.frame(tema,n_clusters,n_de_patentes, net_similarity, input_preference, n_interations)
+names(aux)= c("Temática","# de Clusters", "N de patentes", "Net Similarity", "Input Preference", "# de Iteracciones")
+
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Descripción de las bases utilizadas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(1, width="8em") %>% #total 36
+  column_spec(2, width="5em") %>%
+  column_spec(4, width="5em") %>%
+  column_spec(3, width="5em") %>%
+  column_spec(5, width="5em") %>%
+  column_spec(6, width="5em")
+```
+
+
+
+\section{Definición de los Clusters}
+
+Usando el índice TF-IDF se obtienen los conceptos claves de cada cluster, con los cuales se puede caracterizar la tecnología de cada clusters en cada base.
+
+```{r, include = FALSE, message=FALSE, warning=FALSE}
+
+columna_clusters= function(apresia,BD_unq){
+  BD_unq$apcluster=0
+  for (i in 1:length(apresia@clusters)) {
+    BD_unq$apcluster[apresia@clusters[[i]]]=i 
+  }
+  BD_unq
+}
+
+
+definir_clusters = function(apresia,BD_unq){
+  #apresia = instaflow_cluster
+  #BD_unq = instaflow
+  
+  
+  BD_text <- tibble( Abstract = BD_unq$Abstract, apcluster= as.character(BD_unq$apcluster))
+  
+  
+  cluster_words <- BD_text %>%
+    unnest_tokens(word, Abstract) %>%
+    count(apcluster, word, sort = TRUE)
+  
+  
+  mystopwords <- tibble(word = c("k"))
+  
+  cluster_words <- anti_join(cluster_words, mystopwords, 
+                             by = "word")
+  
+  plot_physics <- cluster_words %>%
+    bind_tf_idf(word, apcluster, n) %>%
+    mutate(word = str_remove_all(word, "_")) %>%
+    filter(word > "a")%>%
+    group_by(apcluster) %>% 
+    slice_max(tf_idf, n = 12) %>%
+    ungroup() %>%
+    mutate(word = reorder_within(word, tf_idf, apcluster)) %>%
+    mutate(apcluster = factor(apcluster))
+  
+  plot_physics$word=sub("__.*", "", plot_physics$word)
+  
+  plot_physics = plot_physics %>%
+    distinct(word, .keep_all = TRUE )
+  
+  aux=with( plot_physics, data.frame(Cluster = as.numeric(unique(apcluster)),Tamano = 0, Keywords = tapply(word, apcluster, paste, collapse = ', ')))
+  
+  aux = aux %>%
+    arrange(Cluster)
+  
+  for (i in 1:max(aux$Cluster)) {
+    aux$Tamano[i]=length(apresia@clusters[[i]])
+    
+  }
+  
+  names(aux)= c("Cluster", "Tamaño", "Keywords")
+  aux
+}
+
+```
+
+
+```{r, eval=TRUE, echo=FALSE, include = FALSE, warning=FALSE, message=FALSE}
+
+instaflow=columna_clusters(instaflow_cluster, instaflow)
+instasoil=columna_clusters(instasoil_cluster, instasoil)
+instaweather=columna_clusters(instaweather_cluster, instaweather)
+instawell=columna_clusters(instawell_cluster, instawell)
+skycrops=columna_clusters(skycrops_cluster, skycrops)
+
+
+instaflow$apcluster1 = instaflow$apcluster
+instasoil$apcluster1 = instasoil$apcluster
+instaweather$apcluster1 = instaweather$apcluster
+instawell$apcluster1 = instawell$apcluster
+skycrops$apcluster1 = skycrops$apcluster
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters(instasoil_cluster,instasoil)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Monitoreo de Suelo", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters(instawell_cluster,instawell)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Monitoreo y Control de Pozos y Tranques", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters(instaflow_cluster,instaflow)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Sistemas de Control de Valvulas Inalambricas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters(instaweather_cluster,instaweather)
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Estaciones Climaticas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters(skycrops_cluster,skycrops)
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Imágenes Satelitales y Drones", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+
+
+\section{Análisis IPC}
+
+La Clasificación Internacional de Patentes, IPC por sus siglas en ingles, es un sistema jerarquico para la clasificación de patentes a partir de las distintas áreas de tecnologías a las que pertenecen.   
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+
+estructurar_base_IPC = function(BD_unq){
+  
+  
+  sentences <-BD_unq$IPC1
+  
+  corpus = tm::Corpus(tm::VectorSource(sentences))
+  # Cleaning up
+  # # Handling UTF-8 encoding problem from the dataset
+  corpus.cleaned <- tm::tm_map(corpus, function(x) iconv(x, to='UTF-8', sub='byte')) 
+  # corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::removeWords, tm::stopwords('english')) # Removing stop-words
+  # corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stemDocument, language = "english") # Stemming the words 
+  corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stripWhitespace) # Trimming excessive whitespaces
+  
+  # Building the feature matrices
+  tdm <- tm::DocumentTermMatrix(corpus.cleaned)
+  #tdm.tfidf <- tm::weightTfIdf(tdm)
+  
+  # We remove A LOT of features. R is natively very weak with high dimensional matrix
+  #tdm.tfidf <- tm::removeSparseTerms(tdm.tfidf, 0.999)
+  #tdm <- tm::removeSparseTerms(tdm, 0.999)
+  
+  # There is the memory-problem part
+  # - Native matrix isn't "sparse-compliant" in the memory
+  # - Sparse implementations aren't necessary compatible with clustering algorithms
+  #tfidf.matrix <- as.matrix(tdm.tfidf)
+  tdm.matrix <- as.matrix(tdm)
+  
+  # Cosine distance matrix (useful for specific clustering algorithms)
+  #dist.matrix = proxy::dist(tfidf.matrix, method = "cosine")
+  dist.matrix = proxy::dist(tdm.matrix, method = "Euclidean")
+  dist.matrix_2D=cmdscale(dist.matrix, k = 2)
+  
+  df=as.matrix(dist.matrix_2D)
+  dist.matrix_2D
+  
+}
+
+```
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+
+instaflow_dist_IPC = estructurar_base_IPC(instaflow)
+instasoil_dist_IPC = estructurar_base_IPC(instasoil)
+instaweather_dist_IPC = estructurar_base_IPC(instaweather)
+instawell_dist_IPC = estructurar_base_IPC(instawell)
+skycrops_dist_IPC = estructurar_base_IPC(skycrops)
+
+```
+
+
+```{r , fig.cap="\\label{fig:fig} Resultados con AP Clustering", eval=TRUE, echo=FALSE, include=TRUE, message=FALSE, out.width = '90%', fig.height=10, fig.align="center", fig.pos="H", warning=FALSE}
+
+library(apcluster)
+
+instaflow_cluster_IPC = apcluster(negDistMat(r=2),instaflow_dist_IPC)
+instasoil_cluster_IPC = apcluster(negDistMat(r=2),instasoil_dist_IPC)
+instaweather_cluster_IPC = apcluster(negDistMat(r=2),instaweather_dist_IPC)
+instawell_cluster_IPC = apcluster(negDistMat(r=2),instawell_dist_IPC)
+skycrops_cluster_IPC = apcluster(negDistMat(r=2),skycrops_dist_IPC)
+
+par(mfrow =c(3,2))
+
+plot(instaflow_cluster_IPC,instaflow_dist_IPC, main="AP Clusters Sistemas de Control de Valvulas Inalambricas")
+plot(instasoil_cluster_IPC,instasoil_dist_IPC, main="AP Clusters Monitoreo de Suelo")
+plot(instaweather_cluster_IPC,instaweather_dist_IPC, main="AP Clusters Estaciones Climaticas")
+plot(instawell_cluster_IPC,instawell_dist_IPC, main="AP Clusters Monitoreo y Control de Pozos y Tranques")
+plot(skycrops_cluster_IPC,skycrops_dist_IPC, main="AP Clusters Imágenes Satelitales y Drones")
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+n_clusters=c(1:5)
+net_similarity= c(1:5)
+input_preference=c(1:5)
+n_interations=c(1:5)
+clusters=list(instasoil_cluster_IPC, instawell_cluster_IPC, instaflow_cluster_IPC, instaweather_cluster_IPC, skycrops_cluster_IPC)
+
+for (i in 1:5) {
+  n_clusters[i] = length(clusters[[i]]@clusters)
+  net_similarity[i] = clusters[[i]]@netsim
+  input_preference[i] = clusters[[i]]@p
+  n_interations[i] = clusters[[i]]@it
+}
+  
+
+aux=data.frame(tema,n_clusters,n_de_patentes, net_similarity, input_preference, n_interations)
+names(aux)= c("Temática","# de Clusters", "N de patentes", "Net Similarity", "Input Preference", "# de Iteracciones")
+
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Descripción de las bases utilizadas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(1, width="8em") %>% #total 36
+  column_spec(2, width="5em") %>%
+  column_spec(4, width="5em") %>%
+  column_spec(3, width="5em") %>%
+  column_spec(5, width="5em") %>%
+  column_spec(6, width="5em")
+```
+
+
+
+```{r, include = FALSE, message=FALSE, warning=FALSE}
+
+definir_clusters_IPC = function(apresia,BD_unq){
+
+  BD_text <- tibble( Abstract = BD_unq$IPC1, apcluster= as.character(BD_unq$apcluster))
+  
+  
+  cluster_words <- BD_text %>%
+    unnest_tokens(word, Abstract) %>%
+    count(apcluster, word, sort = TRUE)
+  
+  
+  mystopwords <- tibble(word = c("k"))
+  
+  cluster_words <- anti_join(cluster_words, mystopwords, 
+                             by = "word")
+  
+  plot_physics <- cluster_words %>%
+    bind_tf_idf(word, apcluster, n) %>%
+    mutate(word = str_remove_all(word, "_")) %>%
+    filter(word > "a")%>%
+    group_by(apcluster) %>% 
+    slice_max(tf_idf, n = 5) %>%
+    ungroup() %>%
+    mutate(word = reorder_within(word, tf_idf, apcluster)) %>%
+    mutate(apcluster = factor(apcluster))
+  
+  plot_physics$word=sub("__.*", "", plot_physics$word)
+  # 
+  # plot_physics = plot_physics %>%
+  #   distinct(word, .keep_all = TRUE )
+  
+  aux=with( plot_physics, data.frame(Cluster = as.numeric(unique(apcluster)),Tamano = 0, Keywords = tapply(word, apcluster, paste, collapse = ', ')))
+  
+  aux = aux %>%
+    arrange(Cluster)
+  
+  for (i in 1:max(aux$Cluster)) {
+    aux$Tamano[i]=length(apresia@clusters[[i]])
+    
+  }
+  
+  names(aux)= c("Cluster", "Tamaño", "Clasificaciones")
+  aux
+}
+
+```
+
+
+
+```{r, eval=TRUE, echo=FALSE, include = FALSE, warning=FALSE, message=FALSE}
+
+instaflow=columna_clusters(instaflow_cluster_IPC, instaflow)
+instasoil=columna_clusters(instasoil_cluster_IPC, instasoil)
+instaweather=columna_clusters(instaweather_cluster_IPC, instaweather)
+instawell=columna_clusters(instawell_cluster_IPC, instawell)
+skycrops=columna_clusters(skycrops_cluster_IPC, skycrops)
+
+
+instaflow$apcluster2 = instaflow$apcluster
+instasoil$apcluster2 = instasoil$apcluster
+instaweather$apcluster2 = instaweather$apcluster
+instawell$apcluster2 = instawell$apcluster
+skycrops$apcluster2 = skycrops$apcluster
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instasoil_cluster_IPC,instasoil)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Monitoreo de Suelo", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instawell_cluster_IPC,instawell)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Monitoreo y Control de Pozos y Tranques", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instaflow_cluster_IPC,instaflow)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Sistemas de Control de Valvulas Inalambricas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instaweather_cluster_IPC,instaweather)
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Estaciones Climaticas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(skycrops_cluster_IPC,skycrops)
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Imágenes Satelitales y Drones", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+
+
+\section{Análisis IPC 2}
+
+La Clasificación Internacional de Patentes, IPC por sus siglas en ingles, es un sistema jerarquico para la clasificación de patentes a partir de las distintas áreas de tecnologías a las que pertenecen.   
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+
+estructurar_base_IPC = function(BD_unq){
+  
+  sentences <-BD_unq$IPC2
+  
+  corpus = tm::Corpus(tm::VectorSource(sentences))
+  for (i in 1:length(corpus)) {
+    
+  }
+  
+  # Cleaning up
+  # # Handling UTF-8 encoding problem from the dataset
+  corpus.cleaned <- tm::tm_map(corpus, function(x) iconv(x, to='UTF-8', sub='byte')) 
+  # corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::removeWords, tm::stopwords('english')) # Removing stop-words
+  # corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stemDocument, language = "english") # Stemming the words 
+  corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stripWhitespace) # Trimming excessive whitespaces
+  
+  # Building the feature matrices
+  tdm <- tm::DocumentTermMatrix(corpus.cleaned)
+  #tdm.tfidf <- tm::weightTfIdf(tdm)
+  
+  # We remove A LOT of features. R is natively very weak with high dimensional matrix
+  #tdm.tfidf <- tm::removeSparseTerms(tdm.tfidf, 0.999)
+  #tdm <- tm::removeSparseTerms(tdm, 0.999)
+  
+  # There is the memory-problem part
+  # - Native matrix isn't "sparse-compliant" in the memory
+  # - Sparse implementations aren't necessary compatible with clustering algorithms
+  #tfidf.matrix <- as.matrix(tdm.tfidf)
+  tdm.matrix <- as.matrix(tdm)
+  
+  # Cosine distance matrix (useful for specific clustering algorithms)
+  #dist.matrix = proxy::dist(tfidf.matrix, method = "cosine")
+  dist.matrix = proxy::dist(tdm.matrix, method = "Euclidean")
+  dist.matrix_2D=cmdscale(dist.matrix, k = 2)
+  
+  df=as.matrix(dist.matrix_2D)
+  dist.matrix_2D
+  
+}
+
+```
+
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+
+instaflow_dist_IPC = estructurar_base_IPC(instaflow)
+instasoil_dist_IPC = estructurar_base_IPC(instasoil)
+instaweather_dist_IPC = estructurar_base_IPC(instaweather)
+instawell_dist_IPC = estructurar_base_IPC(instawell)
+skycrops_dist_IPC = estructurar_base_IPC(skycrops)
+
+```
+
+
+```{r , fig.cap="\\label{fig:fig} Resultados con AP Clustering", eval=TRUE, echo=FALSE, include=TRUE, message=FALSE, out.width = '90%', fig.height=10, fig.align="center", fig.pos="H", warning=FALSE}
+
+library(apcluster)
+
+instaflow_cluster_IPC = apcluster(negDistMat(r=2),instaflow_dist_IPC)
+instasoil_cluster_IPC = apcluster(negDistMat(r=2),instasoil_dist_IPC)
+instaweather_cluster_IPC = apcluster(negDistMat(r=2),instaweather_dist_IPC)
+instawell_cluster_IPC = apcluster(negDistMat(r=2),instawell_dist_IPC)
+skycrops_cluster_IPC = apcluster(negDistMat(r=2),skycrops_dist_IPC)
+
+par(mfrow =c(3,2))
+
+plot(instaflow_cluster_IPC,instaflow_dist_IPC, main="AP Clusters Sistemas de Control de Valvulas Inalambricas")
+plot(instasoil_cluster_IPC,instasoil_dist_IPC, main="AP Clusters Monitoreo de Suelo")
+plot(instaweather_cluster_IPC,instaweather_dist_IPC, main="AP Clusters Estaciones Climaticas")
+plot(instawell_cluster_IPC,instawell_dist_IPC, main="AP Clusters Monitoreo y Control de Pozos y Tranques")
+plot(skycrops_cluster_IPC,skycrops_dist_IPC, main="AP Clusters Imágenes Satelitales y Drones")
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+n_clusters=c(1:5)
+net_similarity= c(1:5)
+input_preference=c(1:5)
+n_interations=c(1:5)
+clusters=list(instasoil_cluster_IPC, instawell_cluster_IPC, instaflow_cluster_IPC, instaweather_cluster_IPC, skycrops_cluster_IPC)
+
+for (i in 1:5) {
+  n_clusters[i] = length(clusters[[i]]@clusters)
+  net_similarity[i] = clusters[[i]]@netsim
+  input_preference[i] = clusters[[i]]@p
+  n_interations[i] = clusters[[i]]@it
+}
+  
+
+
+aux=data.frame(tema,n_clusters,n_de_patentes, net_similarity, input_preference, n_interations)
+names(aux)= c("Temática","# de Clusters", "N de patentes", "Net Similarity", "Input Preference", "# de Iteracciones")
+
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Descripción de las bases utilizadas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(1, width="8em") %>% #total 36
+  column_spec(2, width="5em") %>%
+  column_spec(4, width="5em") %>%
+  column_spec(3, width="5em") %>%
+  column_spec(5, width="5em") %>%
+  column_spec(6, width="5em")
+```
+
+
+
+```{r, include = FALSE, message=FALSE, warning=FALSE}
+
+definir_clusters_IPC = function(apresia,BD_unq){
+  
+  BD_text <- tibble( Abstract = BD_unq$IPC2, apcluster= as.character(BD_unq$apcluster))
+  
+  
+  cluster_words <- BD_text %>%
+    unnest_tokens(word, Abstract) %>%
+    count(apcluster, word, sort = TRUE)
+  
+  
+  mystopwords <- tibble(word = c("k"))
+  
+  cluster_words <- anti_join(cluster_words, mystopwords, 
+                             by = "word")
+  
+  plot_physics <- cluster_words %>%
+    bind_tf_idf(word, apcluster, n) %>%
+    mutate(word = str_remove_all(word, "_")) %>%
+    filter(word > "a")%>%
+    group_by(apcluster) %>% 
+    slice_max(tf_idf, n = 5) %>%
+    ungroup() %>%
+    mutate(word = reorder_within(word, tf_idf, apcluster)) %>%
+    mutate(apcluster = factor(apcluster))
+  
+  plot_physics$word=sub("__.*", "", plot_physics$word)
+  # 
+  # plot_physics = plot_physics %>%
+  #   distinct(word, .keep_all = TRUE )
+  
+  aux=with( plot_physics, data.frame(Cluster = as.numeric(unique(apcluster)),Tamano = 0, Keywords = tapply(word, apcluster, paste, collapse = ', ')))
+  
+  aux = aux %>%
+    arrange(Cluster)
+  
+  for (i in 1:max(aux$Cluster)) {
+    aux$Tamano[i]=length(apresia@clusters[[i]])
+    
+  }
+  
+  names(aux)= c("Cluster", "Tamaño", "Clasificaciones")
+  aux
+}
+
+```
+
+```{r, eval=TRUE, echo=FALSE, include = FALSE, warning=FALSE, message=FALSE}
+
+instaflow=columna_clusters(instaflow_cluster_IPC, instaflow)
+instasoil=columna_clusters(instasoil_cluster_IPC, instasoil)
+instaweather=columna_clusters(instaweather_cluster_IPC, instaweather)
+instawell=columna_clusters(instawell_cluster_IPC, instawell)
+skycrops=columna_clusters(skycrops_cluster_IPC, skycrops)
+
+
+instaflow$apcluster3 = instaflow$apcluster
+instasoil$apcluster3 = instasoil$apcluster
+instaweather$apcluster3 = instaweather$apcluster
+instawell$apcluster3 = instawell$apcluster
+skycrops$apcluster3 = skycrops$apcluster
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instasoil_cluster_IPC,instasoil)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Monitoreo de Suelo", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instawell_cluster_IPC,instawell)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Monitoreo y Control de Pozos y Tranques", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instaflow_cluster_IPC,instaflow)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Sistemas de Control de Valvulas Inalambricas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instaweather_cluster_IPC,instaweather)
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Estaciones Climaticas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(skycrops_cluster_IPC,skycrops)
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Imágenes Satelitales y Drones", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+
+
+\section{Análisis IPC 3}
+
+La Clasificación Internacional de Patentes, IPC por sus siglas en ingles, es un sistema jerarquico para la clasificación de patentes a partir de las distintas áreas de tecnologías a las que pertenecen.   
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+
+estructurar_base_IPC = function(BD_unq){
+  
+  sentences <-BD_unq$IPC3
+  
+  corpus = tm::Corpus(tm::VectorSource(sentences))
+  for (i in 1:length(corpus)) {
+    
+  }
+  
+  # Cleaning up
+  # # Handling UTF-8 encoding problem from the dataset
+  corpus.cleaned <- tm::tm_map(corpus, function(x) iconv(x, to='UTF-8', sub='byte')) 
+  # corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::removeWords, tm::stopwords('english')) # Removing stop-words
+  # corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stemDocument, language = "english") # Stemming the words 
+  corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stripWhitespace) # Trimming excessive whitespaces
+  
+  # Building the feature matrices
+  tdm <- tm::DocumentTermMatrix(corpus.cleaned)
+  #tdm.tfidf <- tm::weightTfIdf(tdm)
+  
+  # We remove A LOT of features. R is natively very weak with high dimensional matrix
+  #tdm.tfidf <- tm::removeSparseTerms(tdm.tfidf, 0.999)
+  #tdm <- tm::removeSparseTerms(tdm, 0.999)
+  
+  # There is the memory-problem part
+  # - Native matrix isn't "sparse-compliant" in the memory
+  # - Sparse implementations aren't necessary compatible with clustering algorithms
+  #tfidf.matrix <- as.matrix(tdm.tfidf)
+  tdm.matrix <- as.matrix(tdm)
+  
+  # Cosine distance matrix (useful for specific clustering algorithms)
+  #dist.matrix = proxy::dist(tfidf.matrix, method = "cosine")
+  dist.matrix = proxy::dist(tdm.matrix, method = "Euclidean")
+  dist.matrix_2D=cmdscale(dist.matrix, k = 2)
+  
+  df=as.matrix(dist.matrix_2D)
+  dist.matrix_2D
+  
+}
+
+```
+
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+
+instaflow_dist_IPC = estructurar_base_IPC(instaflow)
+instasoil_dist_IPC = estructurar_base_IPC(instasoil)
+instaweather_dist_IPC = estructurar_base_IPC(instaweather)
+instawell_dist_IPC = estructurar_base_IPC(instawell)
+skycrops_dist_IPC = estructurar_base_IPC(skycrops)
+
+```
+
+
+```{r , fig.cap="\\label{fig:fig} Resultados con AP Clustering", eval=TRUE, echo=FALSE, include=TRUE, message=FALSE, out.width = '90%', fig.height=10, fig.align="center", fig.pos="H", warning=FALSE}
+
+library(apcluster)
+
+instaflow_cluster_IPC = apcluster(negDistMat(r=2),instaflow_dist_IPC)
+instasoil_cluster_IPC = apcluster(negDistMat(r=2),instasoil_dist_IPC)
+instaweather_cluster_IPC = apcluster(negDistMat(r=2),instaweather_dist_IPC)
+instawell_cluster_IPC = apcluster(negDistMat(r=2),instawell_dist_IPC)
+skycrops_cluster_IPC = apcluster(negDistMat(r=2),skycrops_dist_IPC)
+
+par(mfrow =c(3,2))
+
+plot(instaflow_cluster_IPC,instaflow_dist_IPC, main="AP Clusters Sistemas de Control de Valvulas Inalambricas")
+plot(instasoil_cluster_IPC,instasoil_dist_IPC, main="AP Clusters Monitoreo de Suelo")
+plot(instaweather_cluster_IPC,instaweather_dist_IPC, main="AP Clusters Estaciones Climaticas")
+plot(instawell_cluster_IPC,instawell_dist_IPC, main="AP Clusters Monitoreo y Control de Pozos y Tranques")
+plot(skycrops_cluster_IPC,skycrops_dist_IPC, main="AP Clusters Imágenes Satelitales y Drones")
+
+
+instasoil_info_cluster = list(instasoil_cluster_IPC,instasoil_dist_IPC)
+
+save(instasoil_info_cluster,file = "~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 instasoil - info cluster.RData")
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+n_clusters=c(1:5)
+net_similarity= c(1:5)
+input_preference=c(1:5)
+n_interations=c(1:5)
+clusters=list(instasoil_cluster_IPC, instawell_cluster_IPC, instaflow_cluster_IPC, instaweather_cluster_IPC, skycrops_cluster_IPC)
+
+
+for (i in 1:5) {
+  n_clusters[i] = length(clusters[[i]]@clusters)
+  net_similarity[i] = clusters[[i]]@netsim
+  input_preference[i] = clusters[[i]]@p
+  n_interations[i] = clusters[[i]]@it
+}
+  
+
+
+aux=data.frame(tema,n_clusters,n_de_patentes, net_similarity, input_preference, n_interations)
+names(aux)= c("Temática","# de Clusters", "N de patentes", "Net Similarity", "Input Preference", "# de Iteracciones")
+aux=aux[1,]
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Descripción de las bases utilizadas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(1, width="8em") %>% #total 36
+  column_spec(2, width="5em") %>%
+  column_spec(4, width="5em") %>%
+  column_spec(3, width="5em") %>%
+  column_spec(5, width="5em") %>%
+  column_spec(6, width="5em")
+
+
+save(aux,file = "~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 instasoil - metricas cluster.RData")
+
+```
+
+
+
+```{r, include = FALSE, message=FALSE, warning=FALSE}
+
+definir_clusters_IPC = function(apresia,BD_unq){
+  
+  BD_text <- tibble( Abstract = BD_unq$IPC3, apcluster= as.character(BD_unq$apcluster))
+  
+  
+  cluster_words <- BD_text %>%
+    unnest_tokens(word, Abstract) %>%
+    count(apcluster, word, sort = TRUE)
+  
+  
+  mystopwords <- tibble(word = c("k"))
+  
+  cluster_words <- anti_join(cluster_words, mystopwords, 
+                             by = "word")
+  
+  plot_physics <- cluster_words %>%
+    bind_tf_idf(word, apcluster, n) %>%
+    mutate(word = str_remove_all(word, "_")) %>%
+    filter(word > "a")%>%
+    group_by(apcluster) %>% 
+    slice_max(tf_idf, n = 5) %>%
+    ungroup() %>%
+    mutate(word = reorder_within(word, tf_idf, apcluster)) %>%
+    mutate(apcluster = factor(apcluster))
+  
+  plot_physics$word=sub("__.*", "", plot_physics$word)
+  # 
+  # plot_physics = plot_physics %>%
+  #   distinct(word, .keep_all = TRUE )
+  
+  aux=with( plot_physics, data.frame(Cluster = as.numeric(unique(apcluster)),Tamano = 0, Keywords = tapply(word, apcluster, paste, collapse = ', ')))
+  
+  aux = aux %>%
+    arrange(Cluster)
+  
+  for (i in 1:max(aux$Cluster)) {
+    aux$Tamano[i]=length(apresia@clusters[[i]])
+    
+  }
+  
+  names(aux)= c("Cluster", "Tamaño", "Clasificaciones")
+  aux
+}
+
+```
+
+```{r, eval=TRUE, echo=FALSE, include = FALSE, warning=FALSE, message=FALSE}
+
+instaflow=columna_clusters(instaflow_cluster_IPC, instaflow)
+instasoil=columna_clusters(instasoil_cluster_IPC, instasoil)
+instaweather=columna_clusters(instaweather_cluster_IPC, instaweather)
+instawell=columna_clusters(instawell_cluster_IPC, instawell)
+skycrops=columna_clusters(skycrops_cluster_IPC, skycrops)
+
+
+instaflow$apcluster4 = instaflow$apcluster
+instasoil$apcluster4 = instasoil$apcluster
+instaweather$apcluster4 = instaweather$apcluster
+instawell$apcluster4 = instawell$apcluster
+skycrops$apcluster4 = skycrops$apcluster
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instasoil_cluster_IPC,instasoil)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Monitoreo de Suelo", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+
+save(aux,file = "~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 instasoil - definicion cluster.RData")
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instawell_cluster_IPC,instawell)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Monitoreo y Control de Pozos y Tranques", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instaflow_cluster_IPC,instaflow)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Sistemas de Control de Valvulas Inalambricas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(instaweather_cluster_IPC,instaweather)
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Estaciones Climaticas", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+aux=definir_clusters_IPC(skycrops_cluster_IPC,skycrops)
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de la tecnología de cada Clusters para Imágenes Satelitales y Drones", row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(3, width = "26em")
+
+```
+
+```{r, eval=TRUE, echo=FALSE, include = FALSE, warning=FALSE, message=FALSE}
+
+
+
+save(instaflow,file = "~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 instaflow.RData")
+save(instasoil,file = "~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 instasoil.RData")
+save(instaweather,file = "~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 instaweather.RData")
+save(instawell,file = "~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 instawell.RData")
+save(skycrops, file = "~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 skycrops.RData")
+
+```
+

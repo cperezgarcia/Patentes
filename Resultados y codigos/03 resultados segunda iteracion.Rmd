@@ -1,0 +1,336 @@
+---
+title: "Análisis exploratorio de patentes relacionadas a productos de Instacrops"
+author: "Catalina Perez-Garcia"
+date: "Agosto 2021"
+output:  
+  pdf_document:
+    number_section: True  
+documentclass: article
+classoption: letterpaper
+biblio-style: plain
+header-includes:
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage[utf8]{inputenc}
+- \usepackage[spanish]{babel}
+- \usepackage{booktabs}
+- \usepackage{longtable}
+- \usepackage{multirow}
+- \usepackage{wrapfig}
+- \usepackage{xcolor}
+- \usepackage{tabu}
+- \usepackage{threeparttable}
+- \usepackage{threeparttablex}
+- \usepackage{makecell}
+- \usepackage{lipsum}
+- \usepackage{enumerate}
+- \usepackage{geometry}
+- \usepackage{natbib}
+- \usepackage{titling}
+- \pretitle{\begin{center}\LARGE\ \\[\bigskipamount]}
+- \posttitle{\end{center}}
+- \usepackage{fancyhdr, lastpage}
+- \pagestyle{fancy}
+- \fancyhf{}% Clear header/footer
+- \fancyhead[L]{ \includegraphics[height=35pt]{logo.jpg}}
+- \fancyhead[R]{\parbox[b][][t]{6 cm}{\hfill \raggedright \textbf{Análisis de Patentes}\\ \hfill Agosto 2021}}
+  \fancyfoot[R]{\thepage\  / \pageref{LastPage}}% Right footer
+- \setlength{\headheight}{39pt}
+---
+
+```{r, include=FALSE}
+
+options(tinytex.verbose = TRUE)
+
+# Paquetes que vamos a usar en el reporte
+require(ggplot2)
+require(kableExtra)
+require(ggthemes)
+require(knitr)
+require(RColorBrewer)
+
+# Actualizamos el tema para ggplot2 
+tema <- theme_classic() + 
+  theme(text = element_text(family = "serif"), 
+        legend.position = "bottom",
+        legend.box.background = element_rect(),
+        strip.background = element_blank())
+theme_set(tema)
+
+opts_chunk$set(tidy.opts=list(width.cutoff=20),tidy=TRUE)
+
+
+```
+
+
+\begin{center}
+
+\vspace{1 cm}
+
+
+\includegraphics[height=70pt]{logo.jpg}
+
+
+
+\vspace{1 cm}
+
+INSTASOIL - Monitoreo de Suelo
+
+
+
+\vspace{1 cm}
+
+\end{center}
+
+
+
+\newpage
+
+
+\section{Introducción}
+
+
+Una patente es un conjunto de derechos exclusivos concedidos por un Estado al inventor de un nuevo producto o tecnología, susceptibles de ser explotados comercialmente por un período limitado de tiempo, a cambio de la divulgación de la invención. En un mundo globalizado, donde el éxito de desarrollos tecnológicos depende significativamente de la colaboración de los distintos actores, analizar los datos de las patentes tiene un potencial aún inexplorado. Las herramientas para realizar distintos analisis de la información disponible, podría permitir mejorar la toma de decisiones a todo tipo de organizaciones.El número de patentes aprobadas en el mundo crece rapidamente cada año, por lo que se requieren análisis de patentes que extraigan efectivamente la información valiosa contenida en ellas. 
+
+En particular para Instacrops, el análisis de las patentes relacionadas existentes en el mundo entrega información valiosa sobre la competencia existente para los productos productivos o en desarrollo de la empresa. Esto es fundamental para evaluar el mérito innovativo de las soluciones creadas para desarrollar estrategias de patentabilidad. Por otro lado, será posible evaluar si existen espacios para nuevos desarrollos vinculados a la tecnología vinculada.
+
+\section{Base de datos inicia}
+
+
+PatentScope es la base de datos pública de WIPO, la Organización Mundial de Propiedad Intelectual por sus siglas en ingles. Incluye la cobertura de las solicitudes del Tratado de Cooperación en materia de Patentes (administradas por WIPO) y una amplia gama de otros países, incluida la Oficina Europea de Patentes, la USPTO y Japón. Actualmente la base cuenta con más de 97 millones de documentos de patentes. Para este análisis de patentes se utilizarán distintas bases descargada desde PatentScope. 
+
+Para todos los analisis, se filtran las patentes para dejar solo aquellas desde el año 2000 hasta la fecha según el año de publicación. Se limpian las bases descargadas borrando missing values, cambiando formatos en las columnas según corresponda, eliminando duplicados, entre otras cosas, para dejar la base de datos lista para realizar análisis.
+
+```{r settings, eval=TRUE, echo=FALSE, include = FALSE}
+rm(list=ls())				# Limpiamos todos los objetos creados en R
+graphics.off()				# Limpiamos los gráficos
+options(digits = 3)			# Declaramos dígitos despues del punto para observar (decimas, centesimas,...)
+set.seed(12345)
+
+```
+
+
+```{r cleaning, eval=TRUE, echo=FALSE, include = FALSE}
+# Cargar librerias
+
+library(readxl)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(tidyr)
+library(tidytext)
+library(formatR)
+library(ggplot2)
+library(gridExtra)
+library(apcluster)
+
+load( file = "~/Ramos/2021-2/Instacrops/Patentes/Analisis/Input/Diccionario IPC.Rdata")
+BD_IPC_A01B1 = IPC %>%
+    distinct(Categoria_1_2, .keep_all=TRUE)
+```
+
+En la siguiente tabla se ve la linea de negocio, el concepto, la busqueda realizada en PatentScope y la cantidad de filas antes y después de la limpieza realizada. 
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tema= c("Monitoreo de Suelo")
+linea_de_negocio= c("InstaSoil")
+querys =c("FP:(soil) AND ((crop) OR (farm)) AND ((catheter) OR (probe)) AND (monitoring)") 
+n_de_patentes= c(457)
+n_de_patentes_limpia= c(214)
+aux=data.frame(tema,linea_de_negocio,querys, n_de_patentes, n_de_patentes_limpia)
+names(aux)= c("Concepto","Línea de negocio", "Query", "N de patentes pre-procesamiento", "N de patentes post-procesamiento")
+aux=t(aux)
+names(aux)=c("Valor")
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Descripción de la base utilizada" , row.names = T) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(2, width="20em")
+
+input=list(tema,linea_de_negocio,querys,n_de_patentes,n_de_patentes_limpia)
+```
+
+Esta base inicial sirve para realizar una primera iteración para obtener aprendizajes necesarios para cumplir con el objetivo de encontrar las patentes más relacionadas al servicio a estudiar. En la siguiente tabla se muestra un ejemplo con la información de contenida en cada una las columnas de la base de datos.
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+ejemplo <- read_excel("~/Ramos/2021-2/Instacrops/Patentes/Analisis/Input/01 instasoil.xls", skip = 5)
+aux=data.frame(Columnas=names(ejemplo),Ejemplo=t(ejemplo[1,]))
+ejemplo =NULL
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Ejemplo de una fila en la base de patentes usada" , row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(2, width="22 em")
+
+```
+
+\section{Análisis - Primera Iteración}
+
+El análisis de las bases se compone de un ciclo de tres etapas. La primera es la estructuración de la data, la ejecución de AP Clutering y definición de los clusters obtenidos.
+
+En esta primera iteración se utilizan las configuraciones que se muestran en la siguiente tabla.
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+Aspecto = c("Columna utilizada","Limpieza de texto","Utilización de TF-IDF para ponderar TDMatrix","Distancia","Escalamiento multidimensional")
+Configuraciones = c("IPC nivel A01B","No aplica","No","Euclidiana" ,"Si - 2D")
+
+aux=data.frame(Aspecto,Configuraciones)
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Métodología utilizada" , row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped"))## %>%
+  #column_spec(2, width="22 em")
+
+```
+
+Al implementar AP Clustering se obtienen los siguientes resultados:
+
+
+```{r,  fig.cap="\\label{fig:fig} Resultados con AP Clustering", eval=TRUE, echo=FALSE, include=TRUE, message=FALSE, out.width = '90%', fig.height=4.5, fig.align="center", fig.pos="H", warning=FALSE}
+#par(mfrow =c(1,1))  
+load("~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 instasoil - info cluster.RData")
+
+plot(instasoil_info_cluster[[1]],instasoil_info_cluster[[2]] , main=paste("AP Clusters 1 iteracion",linea_de_negocio)) 
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+load("~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 instasoil - metricas cluster.RData")
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = paste("Métricas cluster base",linea_de_negocio ), row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped"))## %>%
+  #column_spec(2, width="22 em")
+
+```
+
+Y al implementar la metodologia parar la definición de cada uno de los cluster se obtiene lo siguiente 
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+load("~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/01 instasoil - definicion cluster.RData")
+
+BD_text = tibble(aux)%>%
+  unnest_tokens(Clasificaciones,Clasificaciones) %>% 
+  mutate(Clasificaciones = toupper(Clasificaciones)) %>%
+  left_join(BD_IPC_A01B1, by =c("Clasificaciones" = "Categoria_1_2")) %>%
+  select(Cluster,Clasificaciones, Column2)
+
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Definición de las clasificación de cada cluster" , row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped"))## %>%
+  #column_spec(2, width="22 em")
+
+```
+
+
+Al revisar el resultado anterior, se realiza una nueva descarga, esta vez usando la clasificación internacional para generar el dataset.
+Además se añade un paso en el que se eliminan patenes con clasificaciones no relacionadas a la linea de producto a estudiar, las cuales son descritas en la siguiente tabla.
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+input02 = load(file="~/Ramos/2021-2/Instacrops/Patentes/Analisis/Input/02 input.Rdata")
+
+aux = data.frame(input[[5]][["Instasoil"]][["IPC no relacionada"]]) 
+names(aux)= c("IPC no relacionadas")
+aux = aux %>%
+  left_join(BD_IPC_A01B1, by =c("IPC no relacionadas" = "Categoria_1_2")) %>%
+  select(`IPC no relacionadas`, Column2)%>%
+  arrange(`IPC no relacionadas`)
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Categorias eliminadas de la base" , row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(2, width="30 em")
+
+
+```
+
+Los datos del nuevo dataset son:
+  
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tema= c("Monitoreo de Suelo")
+linea_de_negocio= c("InstaSoil")
+querys =c("IC:(G) FP:(soil AND crop)") 
+n_de_patentes= c(1204)
+n_de_patentes_limpia= c(811)
+aux=data.frame(tema,linea_de_negocio,querys, n_de_patentes, n_de_patentes_limpia)
+names(aux)= c("Concepto","Línea de negocio", "Query", "N de patentes pre-procesamiento", "N de patentes post-procesamiento")
+aux=t(aux)
+names(aux)=c("Valor")
+
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Descripción de la base utilizada" , row.names = T) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+  column_spec(2, width="20em")
+
+input=list(tema,linea_de_negocio,querys,n_de_patentes,n_de_patentes_limpia)
+```
+
+
+En esta segunda iteración se utilizan las configuraciones que se muestran en la siguiente tabla.
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+Aspecto = c("Columna utilizada","Limpieza de texto","Utilización de TF-IDF para ponderar TDMatrix","Distancia","Escalamiento multidimensional")
+Configuraciones = c("Title","Si aplica","No","Euclidiana" ,"Si - 2D")
+
+aux=data.frame(Aspecto,Configuraciones)
+kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Métodología utilizada" , row.names = F) %>%
+  kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped"))## %>%
+#column_spec(2, width="22 em")
+
+```
+
+Al implementar AP Clustering se obtienen los siguientes resultados:
+  
+  
+```{r,  fig.cap="\\label{fig:fig} Resultados con AP Clustering", eval=TRUE, echo=FALSE, include=TRUE, message=FALSE, out.width = '90%', fig.height=4.5, fig.align="center", fig.pos="H", warning=FALSE}
+#par(mfrow =c(1,1))  
+b=1
+load("~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/02 info cluster 3.RData")
+#info_cluster_3 = list(bases_post_clusters_3, clusters_3, bases_estruc_clusters_3, tablas_word_clusters_3, tablas_ipc_clusters_3,tablas_metricas_clusters_3)
+plot(info_cluster_3[["clusters_3"]][[b]], info_cluster_3[["bases_estruc_clusters_3"]][[b]] , main=paste("AP Clusters 2 iteracion",linea_de_negocio)) 
+
+```
+
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+kbl(info_cluster_3[["tablas_metricas_clusters_3"]][[b]],
+    booktabs = T,
+    longtable = T,
+    linesep = "",
+    caption = "Métricas del cluster",
+    row.names = F
+  ) %>%
+    kable_styling(
+      full_width = F,
+      latex_options = c("HOLD_position", "repeat_header", "striped")
+    ) %>%
+    column_spec(1, width = "8em") %>% #total 36
+    column_spec(2, width = "5em") %>%
+    column_spec(4, width = "5em") %>%
+    column_spec(3, width = "5em") %>%
+    column_spec(5, width = "5em") %>%
+    column_spec(6, width = "5em")
+
+
+```
+
+Y al implementar la metodologia parar la definición de cada uno de los cluster se obtiene lo siguiente 
+
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+kbl(info_cluster_3[["tablas_word_clusters_3"]][[b]], booktabs = T, longtable = T, linesep = "", caption = paste("Palabras más relevantes en la columna para cada cluster la base de",linea_de_negocio), row.names = F) %>%
+    kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+    column_spec(3, width = "26em")
+
+```
+
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+
+kbl(info_cluster_3[["tablas_ipc_clusters_3"]] , booktabs = T, longtable = T, linesep = "", caption = paste("IPC de los clusters relacionadados en la base de",linea_de_negocio), row.names = F) %>%
+    kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+    column_spec(3, width = "32em")  #%>%
+    #column_spec(3, width = "6em")
+
+```

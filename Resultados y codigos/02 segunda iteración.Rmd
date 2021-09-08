@@ -1,0 +1,876 @@
+---
+title: "Clasificación Internacional de patentes"
+author: "Catalina Perez-Garcia"
+date: "Agosto 2021"
+output:  
+  pdf_document:
+    number_section: True  
+documentclass: article
+classoption: letterpaper
+biblio-style: plain
+header-includes:
+- \usepackage{graphicx}
+- \usepackage{float}
+- \usepackage[utf8]{inputenc}
+- \usepackage[spanish]{babel}
+- \usepackage{booktabs}
+- \usepackage{longtable}
+- \usepackage{multirow}
+- \usepackage{wrapfig}
+- \usepackage{xcolor}
+- \usepackage{tabu}
+- \usepackage{threeparttable}
+- \usepackage{threeparttablex}
+- \usepackage{makecell}
+- \usepackage{lipsum}
+- \usepackage{enumerate}
+- \usepackage{geometry}
+- \usepackage{natbib}
+- \usepackage{titling}
+- \pretitle{\begin{center}\LARGE\ \\[\bigskipamount]}
+- \posttitle{\end{center}}
+- \usepackage{fancyhdr, lastpage}
+- \pagestyle{fancy}
+- \fancyhf{}% Clear header/footer
+- \fancyhead[L]{ \includegraphics[height=35pt]{logo.jpg}}
+- \fancyhead[R]{\parbox[b][][t]{6 cm}{\hfill \raggedright \textbf{Análisis de Patentes}\\ \hfill Agosto 2021}}
+  \fancyfoot[R]{\thepage\  / \pageref{LastPage}}% Right footer
+- \setlength{\headheight}{39pt}
+---
+
+```{r, include=FALSE}
+
+options(tinytex.verbose = TRUE)
+
+# Paquetes que vamos a usar en el reporte
+require(ggplot2)
+require(kableExtra)
+require(ggthemes)
+require(knitr)
+require(RColorBrewer)
+
+# Actualizamos el tema para ggplot2 
+tema <- theme_classic() + 
+  theme(text = element_text(family = "serif"), 
+        legend.position = "bottom",
+        legend.box.background = element_rect(),
+        strip.background = element_blank())
+theme_set(tema)
+
+opts_chunk$set(tidy.opts=list(width.cutoff=20),tidy=TRUE)
+
+
+```
+
+
+\begin{center}
+
+\vspace{1 cm}
+
+
+
+\vspace{1 cm}
+
+\includegraphics[height=70pt]{logo.jpg}
+
+
+
+
+\end{center}
+
+
+
+\newpage
+
+
+
+
+```{r settings, eval=TRUE, echo=FALSE, include = FALSE}
+rm(list=ls())				# Limpiamos todos los objetos creados en R
+graphics.off()				# Limpiamos los gráficos
+options(digits = 3)			# Declaramos dígitos despues del punto para observar (decimas, centesimas,...)
+set.seed(12345)
+
+```
+
+
+```{r cleaning, eval=TRUE, echo=FALSE, include = FALSE}
+# Cargar librerias
+
+library(readxl)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(tidyr)
+library(tidytext)
+library(formatR)
+library(ggplot2)
+library(gridExtra)
+library(igraph)
+library(ggraph)
+library(tm)
+
+```
+
+
+
+```{r, eval=TRUE, echo=FALSE, include = FALSE, message=FALSE, warning=FALSE}
+
+load( file = "~/Ramos/2021-2/Instacrops/Patentes/2. Sprint/IPC/IPC.Rdata")
+
+```
+
+```{r, eval=TRUE, echo=FALSE, include = FALSE, message=FALSE, warning=FALSE}
+
+limpiar_base= function(BD){
+  
+  #BD=instaflow
+  #Las columnas con fechas con el formato correcto.
+  
+  BD <- BD %>%
+    mutate(`Publication Date` = as.Date(`Publication Date`, "%d.%m.%Y" ) ,
+           `Application Date` = as.Date(`Application Date`, "%d.%m.%Y" ) )
+  
+  #Para el analisis se filtan las patentes desde el año 2000 según el año de publicación, el cual no tiene missing values. En este paso la base resultante es de 406 filas (patentes)."""
+  
+  BD <- BD %>%
+    filter(`Publication Date` > "1999-12-31") %>%
+    arrange(desc(`Publication Date`))
+  
+  #Las columnas con textos se pasan a minusculas para evitar futuras incongruencias. Además se separa la columna con los solictantes, para obtener una columna con el primero."""
+  
+  
+  BD <- BD %>%
+    mutate(Title = str_trim(tolower(Title), side = "both"), 
+           Abstract =str_trim(tolower(Abstract), side = "both"), 
+           Applicants = str_trim(tolower(Applicants), side = "both"),
+           Inventors = str_trim(tolower(Inventors), side = "both") ,
+           applicants = Applicants ) %>%  
+    separate(applicants, c("first_Applicant", "rest_Applicants"),"; ",fill = "right", extra = "merge") %>%
+    mutate(first_Applicant = str_trim(first_Applicant, side = "both"))
+  
+  #Dado que los analisis se realizarán con los Abstract de los documentos, se filtran aquellos sin esta variable."""
+  
+  BD <- BD %>%
+    filter(!is.na(Abstract))
+  
+  #"""Dado que los inventos se patentan en más de un país, se crea otra data sin duplicados con 286 filas.
+  
+  
+  #Se cambia el formato de los IPC para poder analizarlos
+  
+  BD = BD %>%
+    mutate(IPC_A01B102=gsub(";", " ", gsub("/| ", "",`I P C`)),
+           IPC_A01B1 =  `I P C`,
+           IPC_A01B =`I P C` )
+        
+  #obtener clasificacion del hasta el nivel A01B1 "A - 01 - B - 1/00"
+  
+  hola = strsplit(gsub(" ", "", BD$`I P C`),";")
+  for (i in 1:length(hola)) {
+    BD$IPC_A01B1[i]= paste(sort(unique(substr(hola[[i]], 1, 6))), collapse = " ") 
+  }
+  BD = BD %>%
+    mutate(IPC_A01B1=gsub("/", "", IPC_A01B1))
+  
+  #obtener clasificacion del hasta el nivel A01B "A - 01 - B"
+  
+  hola = strsplit(gsub(" ", "", BD$`I P C`),";")
+  for (i in 1:length(hola)) {
+    BD$IPC_A01B[i]= paste(sort(unique(substr(hola[[i]], 1, 4))), collapse = " ") 
+  }
+  BD = BD %>%
+    mutate(IPC_A01B=gsub("/", "", IPC_A01B))
+  
+  #agregar una columna con la definicion de la clasificacion
+  # 
+  # BD_IPC_A01B = IPC %>%
+  #   distinct(Categoria_1, .keep_all=TRUE)
+  # 
+  # BD_IPC_A01B1 = IPC %>%
+  #   distinct(Categoria_1_2, .keep_all=TRUE)
+  # 
+  # BD = BD %>%
+  #   left_join(select(BD_IPC_A01B1,Def_A01B1 = Column2,Categoria_1_2), by =c("IPC_A01B1" = "Categoria_1_2")) %>%
+  #   left_join(select(BD_IPC_A01B, Def_A01B = Column2), by =c("IPC_A01B" = "Categoria_1"))
+  
+  
+  BD2 <- BD %>%
+    distinct(Title, .keep_all= TRUE)
+  
+  
+  #resultados
+  list(BD2,BD)
+}
+
+
+```
+
+
+
+```{r, include = FALSE, message=FALSE, warning=FALSE}
+#Definir los atributos con los que se trabajará
+archivos = c("instasoil2")
+busquedas = c("IC:(G) FP:(soil AND crop)")
+nombres = c("Instasoil")
+bases = list()
+
+
+clasificaciones = list(list())
+
+#clasificaciones de instasoil
+clasificaciones[[1]][[1]] = c("G01N","A01G","G05B","A01B","G06K","A01B49","G01K7")
+clasificaciones[[1]][[2]] = c("A01C","B05B","G01W","A01C","G05D")
+clasificaciones[[1]][[3]] = c("C12N","C05F","C12P","B09C", "B65D","B67D","G01S","G01V","A01K","A01M","B62D","A01D","A01F","G01C","A01C","G01G","G06N","C12Q","H04N","A01B79","G06Q30","A01G7","G01N1","B64C","B64D","A01G9","G05B19","A01B79","G06Q30","C06Q20","G01N5")
+clasificaciones[[1]][[4]] = c("G01C")
+
+for (b in 1:length(nombres)) {
+  names(clasificaciones[[b]]) = c("IPC asociada", "IPC relacionada","IPC no relacionada", "IPC indefinida")
+}
+names(clasificaciones)=nombres
+
+
+buenas_keywords=c("monitoring","moisture","soil","water","agro","farming","crop")
+
+
+```
+
+
+
+
+
+```{r, include = FALSE, message=FALSE, warning=FALSE}
+
+#cuidado por si hay que cambiar la carpeta
+for (b in 1:length(archivos)) {
+  BD =read_excel(paste("~/Ramos/2021-2/Instacrops/Patentes/2. Sprint/",archivos[b],".xls",sep = ""),  skip = 5)
+  bases[[b]] = limpiar_base(BD)
+  #BD=NULL
+}
+# 
+# BD2 =read_excel(paste("~/Ramos/2021-2/Instacrops/Patentes/2. Sprint/","instasoil2.2",".xls",sep = ""),  skip = 5)
+# BD1 =read_excel(paste("~/Ramos/2021-2/Instacrops/Patentes/2. Sprint/","instasoil2",".xls",sep = ""),  skip = 5)
+# bases[[1]]=limpiar_base(rbind(BD1,BD2))
+# BD2=NULL
+# BD1=NULL
+
+names(bases)=nombres
+
+for (b in 1:length(nombres)) {
+  for (k in 1:2) {
+    for (ipc in clasificaciones[[b]]$`IPC no relacionada`) {
+      bases[[b]][[k]] = bases[[b]][[k]] %>%
+        filter(!(grepl(ipc,bases[[b]][[k]]$IPC_A01B))&!(grepl(ipc,bases[[b]][[k]]$IPC_A01B1))) 
+    } 
+  }
+}
+
+
+
+
+input=list(archivos,busquedas,nombres,bases,clasificaciones,buenas_keywords)
+save(input , file="~/Ramos/2021-2/Instacrops/Patentes/Analisis/Input/02 input.Rdata")
+```
+
+
+
+
+```{r, include = FALSE, message=FALSE, warning=FALSE}
+
+tablas_frec_desc_ipc =function(BD,BD_IPC,n_rows,columns,negocio){
+  # b=1
+  # BD= bases[[b]][[1]]
+  # BD_IPC=IPC
+  # n_rows = 10
+  # columns = c("IPC_A01B","IPC_A01B1")
+  # negocio=nombres[b]
+  # col=columns[1]
+  
+  
+  BD_IPC_A01B1 = BD_IPC %>%
+    distinct(Categoria_1_2, .keep_all=TRUE)
+  
+  tablas=list()
+  for (col in columns) {
+    BD_text <- tibble(data.frame(id = BD$`Application Id`, clasif=BD[,col])) %>%
+      unnest_tokens(word,col) %>%
+      count(word,sort = TRUE) %>%
+      slice_head(n = n_rows) %>%
+      mutate(word=toupper(word)) %>%
+      left_join(BD_IPC_A01B1, by =c("word" = "Categoria_1_2")) %>%
+      select(word,Column2, n) %>% 
+      distinct(word, .keep_all = TRUE)
+    
+    names(BD_text)= c("IPC", "Definición", "N")
+    tablas[[col]] = kbl(BD_text, booktabs = T, longtable = T, linesep = "", caption = paste("Clasificaciones más frecuentes al nivel", sub("IPC_","",col)," en la base de",negocio), row.names = F) %>%
+      kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+      column_spec(2, width = "26em")
+  }
+  tablas
+}
+  
+
+tablas_frec_desc_ipc_1 = list()
+
+for(b in 1:length(nombres)){
+  tablas_frec_desc_ipc_1[[b]] = tablas_frec_desc_ipc(BD= bases[[b]][[1]], BD_IPC=IPC,n_rows = 25, columns = c("IPC_A01B","IPC_A01B1"),nombres[b])
+}
+names(tablas_frec_desc_ipc_1)=nombres
+
+```
+
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tablas_frec_desc_ipc_1[["Instasoil"]][[1]]
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tablas_frec_desc_ipc_1[["Instasoil"]][[2]]
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE,message= FALSE, warning=FALSE}
+
+
+tablas_frec_par_desc_ipc =function(BD,BD_IPC,n_rows,columns,negocio){
+   # b=1
+   # BD= bases[[b]][[1]]
+   # BD_IPC=IPC
+   # n_rows = 10
+   # columns = c("IPC_A01B","IPC_A01B1")
+   # negocio=nombres[b]
+   # col=columns[1]
+  
+  BD_IPC_A01B1 = BD_IPC %>%
+    distinct(Categoria_1_2, .keep_all=TRUE)
+  
+  tablas=list()
+  
+  for (col in columns) {
+    pairs=data.frame(id=c(),word1=c(),word2=c())
+    for (i in 1:nrow(BD)) {
+      x=strsplit(as.character(BD[i,col])," ")
+      if(length(x[[1]])>1){
+        BD_i=cbind(rep(BD$`Application Id`[i],length(x[[1]])),t(combn(x[[1]], 2)))
+        pairs = rbind(pairs,BD_i)
+      }
+      if(length(x[[1]])==1){
+        BD_i=cbind(BD$`Application Id`[i],x[[1]],NA)
+        pairs = rbind(pairs,BD_i)
+      }
+      
+    }
+    names(pairs)= c("ID","word1","word2")
+    pairs2 = pairs %>%
+      count(word1,word2,sort=TRUE) %>%
+      slice_head(n=n_rows) %>%
+      left_join(BD_IPC_A01B1, by =c("word1" = "Categoria_1_2")) %>%
+      select(word1,word2,def1=Column2, n) %>% 
+      left_join(BD_IPC_A01B1, by =c("word2" = "Categoria_1_2")) %>%
+      select(n,word1,def1,word2,def2=Column2) %>%
+      distinct(word1,word2, .keep_all = TRUE)
+    
+    names(pairs2)= c("N","IPC 1", "Definición 1","IPC 2", "Definición 2")
+    
+    tablas[[col]] = kbl(pairs2, booktabs = T, longtable = T, linesep = "", caption = paste("Clasificaciones más frecuentes al nivel", sub("IPC_","",col)," en la base de",negocio), row.names = F) %>%
+      kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+      column_spec(3, width = "14em")%>%
+      column_spec(5, width = "14em")
+  }
+  tablas
+}
+
+tablas_frec_par_desc_ipc_1 = list()
+
+for(b in 1:length(nombres)){
+  tablas_frec_par_desc_ipc_1[[b]] = tablas_frec_par_desc_ipc(BD= bases[[b]][[1]], BD_IPC=IPC,n_rows = 15, columns = c("IPC_A01B","IPC_A01B1"),nombres[b])
+}
+
+names(tablas_frec_par_desc_ipc_1)=nombres
+
+```
+
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tablas_frec_par_desc_ipc_1[["Instasoil"]][[1]]
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tablas_frec_par_desc_ipc_1[["Instasoil"]][[2]]
+
+```
+
+
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+library(tidytext)
+library(apcluster)
+
+obt_clusters_1 = function(BD,col,metodo_dist,negocio,nom_cluster,n_row,BD_IPC){
+  # b=1
+  # BD=bases[[b]][[1]]
+  # col="IPC_A01B1"
+  # metodo_dist="Euclidean"
+  # negocio=nombres[b]
+  # nom_cluster="cluster_1"
+  # n_row = 5
+  # BD_IPC=IPC
+  
+  #ESTRUCTURAR LA BASE
+  if(col == "IPC_A01B1"){
+   BD= BD %>% mutate(pp = IPC_A01B1) 
+  }
+  if(col == "IPC_A01B"){
+   BD= BD %>% mutate(pp = IPC_A01B) 
+  }
+  corpus = tm::Corpus(tm::VectorSource(BD$pp))
+  BD$pp=NULL
+  #corpus.cleaned <- tm::tm_map(corpus, function(x) iconv(x, to='UTF-8', sub='byte')) 
+  # corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::removeWords, tm::stopwords('english')) # Removing stop-words
+  # corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stemDocument, language = "english") # Stemming the words 
+  # corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stripWhitespace) # Trimming excessive whitespaces
+  
+  # Building the feature matrices
+  tdm <- tm::DocumentTermMatrix(corpus)
+  #tdm <- tm::DocumentTermMatrix(corpus.cleaned)
+  tdm.tfidf <- tm::weightTfIdf(tdm)
+  
+  # We remove A LOT of features. R is natively very weak with high dimensional matrix
+  #tdm.tfidf <- tm::removeSparseTerms(tdm.tfidf, 0.999)
+  #tdm <- tm::removeSparseTerms(tdm, 0.999)
+  
+  # There is the memory-problem part
+  # - Native matrix isn't "sparse-compliant" in the memory
+  # - Sparse implementations aren't necessary compatible with clustering algorithms
+  tfidf.matrix <- as.matrix(tdm.tfidf)
+  tdm.matrix <- as.matrix(tdm)
+  
+  # Cosine distance matrix (useful for specific clustering algorithms)
+  dist.matrix = proxy::dist(tfidf.matrix, method = metodo_dist)
+  #dist.matrix = proxy::dist(tdm.matrix, method = metodo_dist)
+  dist.matrix_2D=cmdscale(dist.matrix, k = 2)
+  #dist.matrix_2D
+  BD_estruc=as.matrix(dist.matrix_2D)
+  
+  #ARMAR LOS CLUSTERS
+  
+  cluster_1=apcluster(negDistMat(r=2),BD_estruc)
+  BD$pp=0
+  names(BD)[ncol(BD)]=nom_cluster
+  
+  for (i in 1:length(cluster_1@clusters)) {
+    BD[cluster_1@clusters[[i]],nom_cluster]=i 
+  }
+  
+  BD_IPC_A01B1 = BD_IPC %>%
+    distinct(Categoria_1_2, .keep_all=TRUE)
+  
+  #ARMAR TABLA
+  
+  BD_text = tibble(data.frame(id = BD$`Application Id`, clasif=BD[,col],cluster = BD[,nom_cluster]))
+  names(BD_text)=c("id","clasif","clust")
+  BD_text = BD_text%>%
+    unnest_tokens(word,clasif) %>% 
+    #mutate(pp= om_cluster) %>%
+    count(clust,word,sort = TRUE) %>%
+    mutate(word = str_remove_all(word, "_")) %>%
+    group_by(clust) %>% 
+    slice_max(n ,n=n_row) %>%
+    ungroup()%>%
+    mutate(word = toupper(sub("__.*", "",word ))) %>%
+    left_join(BD_IPC_A01B1, by =c("word" = "Categoria_1_2")) %>%
+    select(clust,word,Column2, n) %>%
+    #distinct(word,clust, .keep_all = TRUE) %>%
+    distinct(word, .keep_all = TRUE)
+  
+  names(BD_text)= c("Cluster","IPC", "Definición", "N")
+  
+  tabla_1 = kbl(BD_text, booktabs = T, longtable = T, linesep = "", caption = paste("Clasificaciones más frecuentes al nivel", sub("IPC_","",col)," para cada cluster la base de",negocio), row.names = F) %>%
+    kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+    column_spec(3, width = "26em")
+  list(BD,cluster_1,BD_estruc,list(tabla_1))
+}
+
+
+bases_post_clusters_1 = list()
+clusters_1 = list()
+bases_estruc_clusters_1 = list()
+tablas_ipc_clusters_1 = list()
+
+for(b in 1:length(nombres)){
+ hola = obt_clusters_1(BD=bases[[b]][[1]], col="IPC_A01B1", metodo_dist="Euclidean", negocio=nombres[b], nom_cluster="cluster_1", n_row = 5, BD_IPC=IPC)
+  bases_post_clusters_1[[b]] = hola[[1]]
+  clusters_1[[b]] = hola[[2]] 
+  bases_estruc_clusters_1[[b]] = hola[[3]]
+  tablas_ipc_clusters_1[[b]] =  hola[[4]]
+}
+  
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tablas_ipc_clusters_1[[1]][[1]]
+
+```
+
+
+```{r,  fig.cap="\\label{fig:fig} Resultados con AP Clustering", eval=TRUE, echo=FALSE, include=TRUE, message=FALSE, out.width = '90%', fig.height=10, fig.align="center", fig.pos="H", warning=FALSE}
+par(mfrow =c(1,1))  
+plot(clusters_1[[1]],bases_estruc_clusters_1[[1]], main=paste("AP Clusters",nombres[1])) 
+```
+
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+
+bases_post_clusters_2 = list()
+clusters_2 = list()
+bases_estruc_clusters_2 = list()
+tablas_ipc_clusters_2 = list()
+
+for(b in 1:length(nombres)){
+ hola = obt_clusters_1(BD=bases[[b]][[1]], col="IPC_A01B", metodo_dist="Euclidean", negocio=nombres[b], nom_cluster="cluster_2", n_row = 5, BD_IPC=IPC)
+  bases_post_clusters_2[[b]] = hola[[1]]
+  clusters_2[[b]] = hola[[2]] 
+  bases_estruc_clusters_2[[b]] = hola[[3]]
+  tablas_ipc_clusters_2[[b]] =  hola[[4]]
+}
+  
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tablas_ipc_clusters_2[[1]][[1]]
+
+```
+
+
+```{r, fig.cap="\\label{fig:fig} Resultados con AP Clustering", eval=TRUE, echo=FALSE, include=TRUE, message=FALSE, out.width = '90%', fig.height=10, fig.align="center", fig.pos="H", warning=FALSE}
+par(mfrow =c(1,1))
+
+plot(clusters_2[[1]],bases_estruc_clusters_2[[1]], main=paste("AP Clusters",nombres[1])) 
+
+```
+
+
+
+
+
+
+```{r, eval=TRUE, echo=FALSE, include = FALSE, warning=FALSE, message=FALSE}
+
+
+
+
+```
+
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+# 
+# bases_est = a()
+# 
+# 
+# 
+# 
+# par(mfrow =c(3,2))
+# 
+# 
+# 
+# 
+# n_clusters=c(1:5)
+# net_similarity= c(1:5)
+# input_preference=c(1:5)
+# n_interations=c(1:5)
+# clusters=list(instasoil_cluster_IPC, instawell_cluster_IPC, instaflow_cluster_IPC, instaweather_cluster_IPC, skycrops_cluster_IPC)
+# 
+# for (i in 1:5) {
+#   n_clusters[i] = length(clusters[[i]]@clusters)
+#   net_similarity[i] = clusters[[i]]@netsim
+#   input_preference[i] = clusters[[i]]@p
+#   n_interations[i] = clusters[[i]]@it
+# }
+#   
+# 
+# 
+# aux=data.frame(tema,n_clusters,n_de_patentes, net_similarity, input_preference, n_interations)
+# names(aux)= c("Temática","# de Clusters", "N de patentes", "Net Similarity", "Input Preference", "# de Iteracciones")
+# 
+# 
+# 
+# kbl(aux, booktabs = T, longtable = T, linesep = "", caption = "Descripción de las bases utilizadas", row.names = F) %>%
+#   kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+#   column_spec(1, width="8em") %>% #total 36
+#   column_spec(2, width="5em") %>%
+#   column_spec(4, width="5em") %>%
+#   column_spec(3, width="5em") %>%
+#   column_spec(5, width="5em") %>%
+#   column_spec(6, width="5em")
+
+```
+
+
+\section{Clustering by title patents}
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+
+obt_clusters_2 = function(BD,col,metodo_dist,negocio,nom_cluster,n_row,BD_IPC,keys){
+  # b=1
+  # BD=bases[[b]][[1]]
+  # col="Title"
+  # metodo_dist="Euclidean"
+  # negocio=nombres[b]
+  # nom_cluster="cluster_3"
+  # n_row = 5
+  # BD_IPC=IPC
+  # keys = buenas_keywords
+  
+  #ESTRUCTURAR LA BASE
+  if(col == "IPC_A01B1"){
+   BD= BD %>% mutate(pp = IPC_A01B1) 
+  }
+  if(col == "IPC_A01B"){
+   BD= BD %>% mutate(pp = IPC_A01B) 
+  }
+  if(col == "Abstract"){
+   BD= BD %>% mutate(pp = Abstract) 
+  }
+  if(col == "Title"){
+   BD= BD %>% mutate(pp = Title) 
+  }
+  corpus = tm::Corpus(tm::VectorSource(BD$pp))
+  BD$pp=NULL
+  corpus.cleaned <- tm::tm_map(corpus, function(x) iconv(x, to='UTF-8', sub='byte')) 
+  corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::removeWords, tm::stopwords('english')) # Removing stop-words
+  corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stemDocument, language = "english") # Stemming the words 
+  corpus.cleaned <- tm::tm_map(corpus.cleaned, tm::stripWhitespace) # Trimming excessive whitespaces
+  
+  # Building the feature matrices
+  # tdm <- tm::DocumentTermMatrix(corpus)
+  tdm <- tm::DocumentTermMatrix(corpus.cleaned)
+  tdm.tfidf <- tm::weightTfIdf(tdm)
+  
+  # We remove A LOT of features. R is natively very weak with high dimensional matrix
+  #tdm.tfidf <- tm::removeSparseTerms(tdm.tfidf, 0.999)
+  #tdm <- tm::removeSparseTerms(tdm, 0.999)
+  
+  # There is the memory-problem part
+  # - Native matrix isn't "sparse-compliant" in the memory
+  # - Sparse implementations aren't necessary compatible with clustering algorithms
+  tfidf.matrix <- as.matrix(tdm.tfidf)
+  tdm.matrix <- as.matrix(tdm)
+  
+  # Cosine distance matrix (useful for specific clustering algorithms)
+  #dist.matrix = proxy::dist(tfidf.matrix, method = metodo_dist)
+  dist.matrix = proxy::dist(tdm.matrix, method = metodo_dist)
+  dist.matrix_2D=cmdscale(dist.matrix, k = 2)
+  #dist.matrix_2D
+  BD_estruc=as.matrix(dist.matrix_2D)
+  
+  #ARMAR LOS CLUSTERS
+  
+  cluster_1=apcluster(negDistMat(r=2),BD_estruc)
+  BD$pp=0
+  names(BD)[ncol(BD)]=nom_cluster
+  
+  for (i in 1:length(cluster_1@clusters)) {
+    BD[cluster_1@clusters[[i]],nom_cluster]=i 
+  }
+  
+  BD_IPC_A01B1 = BD_IPC %>%
+    distinct(Categoria_1_2, .keep_all=TRUE)
+  
+  #ARMAR TABLA
+  data(stop_words)
+  
+  BD_text = tibble(data.frame(id = BD$`Application Id`, clasif=BD[,col],cluster = BD[,nom_cluster]))
+  names(BD_text)=c("id","clasif","clust")
+  BD_text = BD_text%>%
+    unnest_tokens(word,clasif) %>% 
+    anti_join(stop_words, by= "word") %>%
+    filter(word > "a")%>%
+    #mutate(pp= om_cluster) %>%
+    count(clust,word,sort = TRUE) %>%
+    bind_tf_idf(word, clust, n) %>%
+    mutate(word = str_remove_all(word, "_")) %>%
+    group_by(clust) %>% 
+    slice_max(n ,n=n_row) %>%
+    ungroup()%>%
+    mutate(word = toupper(gsub("__.*", "",word ))) %>%
+    mutate(clust = as.factor(clust)) %>%
+    #left_join(BD_IPC_A01B1, by =c("word" = "Categoria_1_2")) %>%
+    select(clust,word, n)
+    #distinct(word,clust, .keep_all = TRUE) %>%
+    #distinct(word, .keep_all = TRUE)
+  
+  BD_text=with( BD_text, data.frame(Cluster = as.numeric(unique(clust)),Tamano = 0, Keywords = tapply(word, clust, paste, collapse = ', ')))%>%
+    arrange(Cluster)
+  
+  BD_text$contador=0
+  
+  keys=toupper(keys)
+  for (k in keys) {
+    BD_text =BD_text %>%
+      mutate(contador = ifelse(grepl(k,Keywords),contador+1,contador))
+  }
+  
+  for (i in 1:max(BD_text$Clust)) {
+    BD_text$Tamano[i]=length(cluster_1@clusters[[i]])
+  }
+  
+  names(BD_text)= c("Cluster", "N", "Keywords","N Keywords Relacionadas")
+  datos_tabla_1 =BD_text
+  tabla_1 = kbl(BD_text, booktabs = T, longtable = T, linesep = "", caption = paste("Palabras más relevantes en la columna para cada cluster la base de",negocio), row.names = F) %>%
+    kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+    column_spec(3, width = "26em")
+  
+  BD_text$contador=0
+  
+  keys=toupper(keys)
+  for (k in keys) {
+    BD_text =BD_text %>%
+      mutate(contador = ifelse(grepl(k,Keywords),contador+1,contador))
+  }
+  BD_text = BD_text %>%
+    filter(contador > 0)
+  
+  #ARMAR TABLA
+  BD_text_2 = tibble(data.frame(id = BD$`Application Id`, clasif=BD$IPC_A01B1,cluster = BD[,nom_cluster]))
+  names(BD_text_2)=c("id","clasif","clust")
+  BD_text_2 = BD_text_2 %>%
+    mutate(clasif = as.character(clasif))%>%
+    unnest_tokens(word,clasif) %>% 
+    #mutate(pp= om_cluster) %>%
+    count(clust,word,sort = TRUE) %>%
+    mutate(word = str_remove_all(word, "_")) %>%
+    group_by(clust) %>% 
+    slice_max(n ,n=6) %>%
+    ungroup()%>%
+    mutate(word = toupper(sub("__.*", "",word ))) %>%
+    left_join(BD_IPC_A01B1, by =c("word" = "Categoria_1_2")) %>%
+    select(clust,word,Column2, n) %>%
+    #distinct(word,clust, .keep_all = TRUE) %>%
+    distinct(word, .keep_all = TRUE)
+  
+  names(BD_text_2)= c("Cluster","IPC", "Definición", "N")
+  datos_tabla_2= BD_text_2
+  tabla_2 = kbl(BD_text_2, booktabs = T, longtable = T, linesep = "", caption = paste("Clasificaciones más frecuentes al nivel", sub("IPC_","",col)," para cada cluster la base de",negocio), row.names = F) %>%
+    kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+    column_spec(3, width = "30em")
+  
+  
+  BD_text_3 = tibble(data.frame(id = BD$`Application Id`, clasif=BD[,col], cluster = BD[,nom_cluster],ipc = BD$IPC_A01B))
+  names(BD_text_3)=c("id","clasif","clust","ipc")
+  
+  BD_text_3 = BD_text_3 %>%
+    #filter(clust %in% c(2,3,4))%>% ##,5,6,9,10,13,14,15,18
+    mutate(clust = as.factor(clust)) %>%
+    #left_join(BD_IPC_A01B1, by =c("word" = "Categoria_1_2")) %>%
+    select(clust,clasif,ipc) %>%
+    arrange(as.numeric(clust)) %>%
+    filter(as.numeric(clust) %in% as.vector(BD_text$Cluster))
+  names(BD_text_3)= c("Cluster", "Titulos","Clasificacion")
+  datos_tabla_3=BD_text_3
+  tabla_3 = kbl(BD_text_3, booktabs = T, longtable = T, linesep = "", caption = paste("Titulos de los clusters relacionadados en la base de",negocio), row.names = F) %>%
+    kable_styling(full_width = F, latex_options = c("HOLD_position", "repeat_header","striped")) %>%
+    column_spec(2, width = "32em") %>%
+    column_spec(3, width = "6em")
+  
+  
+  aux = data.frame(negocio,n_clusters = length(cluster_1@clusters),nrow(BD_estruc),  net_similarity = cluster_1@netsim,   input_preference = cluster_1@p,  n_interations = cluster_1@it)
+
+names(aux) = c(
+    "Producto",
+    "# de Clusters",
+    "N de patentes",
+    "Net Similarity",
+    "Input Preference",
+    "# de Iteracciones"
+  )
+  
+  datos_tabla_4=aux
+  tabla_4= kbl(
+    aux,
+    booktabs = T,
+    longtable = T,
+    linesep = "",
+    caption = "",
+    row.names = F
+  ) %>%
+    kable_styling(
+      full_width = F,
+      latex_options = c("HOLD_position", "repeat_header", "striped")
+    ) %>%
+    column_spec(1, width = "8em") %>% #total 36
+    column_spec(2, width = "5em") %>%
+    column_spec(4, width = "5em") %>%
+    column_spec(3, width = "5em") %>%
+    column_spec(5, width = "5em") %>%
+    column_spec(6, width = "5em")
+  
+  
+  
+  list(BD,cluster_1,BD_estruc,list(tabla_1),list(tabla_2),list(tabla_3),list(tabla_4),datos_tabla_1,datos_tabla_2,datos_tabla_3,datos_tabla_4)
+  
+}
+
+
+bases_post_clusters_3 = list()
+clusters_3 = list()
+bases_estruc_clusters_3 = list()
+tablas_word_clusters_3 = list()
+tablas_ipc_clusters_3 = list()
+tablas_titulo_clusters_3 = list()
+tablas_metricas_clusters_3 = list()
+
+for(b in 1:length(nombres)){
+ hola = obt_clusters_2(BD=bases[[b]][[1]], col="Title", metodo_dist="Euclidean", negocio=nombres[b], nom_cluster="cluster_3", n_row = 7, BD_IPC=IPC,keys = buenas_keywords)
+  bases_post_clusters_3[[b]] = hola[[1]]
+  clusters_3[[b]] = hola[[2]] 
+  bases_estruc_clusters_3[[b]] = hola[[3]]
+  tablas_word_clusters_3[[b]] =  hola[[8]]
+  tablas_ipc_clusters_3[[b]] =  hola[[9]]
+  tablas_titulo_clusters_3[[b]] =  hola[[10]]
+  tablas_metricas_clusters_3[[b]] = hola[[11]]
+}
+  
+
+
+
+info_cluster_3 = list(bases_post_clusters_3, clusters_3, bases_estruc_clusters_3, tablas_word_clusters_3, tablas_ipc_clusters_3,tablas_titulo_clusters_3,tablas_metricas_clusters_3)
+names(info_cluster_3)=c("bases_post_clusters_3","clusters_3" ,"bases_estruc_clusters_3", "tablas_word_clusters_3", "tablas_ipc_clusters_3", "tablas_titulo_clusters_3" ,"tablas_metricas_clusters_3")
+
+save(info_cluster_3,file = "~/Ramos/2021-2/Instacrops/Patentes/Analisis/Output/02 info cluster 3.RData")
+
+```
+
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tablas_word_clusters_3[[1]][[1]]
+
+
+
+```
+
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tablas_ipc_clusters_3[[1]][[1]]
+
+```
+
+```{r, eval = TRUE, echo = FALSE, include = TRUE, fig.width=16}
+tablas_titulo_clusters_3[[1]][[1]]
+
+```
+
+```{r,  fig.cap="\\label{fig:fig} Resultados con AP Clustering", eval=TRUE, echo=FALSE, include=TRUE, message=FALSE, out.width = '90%', fig.height=10, fig.align="center", fig.pos="H", warning=FALSE}
+par(mfrow =c(1,1))  
+plot(clusters_3[[1]],bases_estruc_clusters_3[[1]], main=paste("AP Clusters",nombres[1])) 
+```
+
+
